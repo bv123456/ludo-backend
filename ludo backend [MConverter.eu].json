@@ -1,0 +1,81 @@
+const express = require("express");
+const http = require("http");
+const { Server } = require("socket.io");
+const cors = require("cors");
+
+const app = express();
+const server = http.createServer(app);
+const io = new Server(server, {
+  cors: {
+    origin: "*",
+    methods: ["GET", "POST"]
+  }
+});
+
+app.use(cors());
+
+let players = {};
+
+io.on("connection", (socket) => {
+  console.log("A player connected: ", socket.id);
+
+  socket.on("joinGame", ({ playerName, deposit }) => {
+    players[socket.id] = { playerName, deposit, score: 0 };
+    console.log(players);
+
+    if (Object.keys(players).length === 2) {
+      startGame();
+    }
+  });
+
+  function startGame() {
+    io.emit("gameStart", { message: "Game started!", players });
+    let timer = 30;
+    let interval = setInterval(() => {
+      timer--;
+      io.emit("timer", timer);
+      if (timer === 0) {
+        clearInterval(interval);
+        decideWinner();
+      }
+    }, 1000);
+  }
+
+  function rollDice(depositA, depositB) {
+    let bias = depositA > depositB ? 0.7 : 0.3; 
+    return Math.random() < bias ? 6 : Math.ceil(Math.random() * 5);
+  }
+
+  socket.on("rollDice", () => {
+    if (Object.keys(players).length < 2) return;
+    let [playerA, playerB] = Object.values(players);
+    let diceValue = rollDice(playerA.deposit, playerB.deposit);
+    players[socket.id].score += diceValue;
+    io.emit("diceRolled", { playerId: socket.id, diceValue });
+  });
+
+  function decideWinner() {
+    let [playerA, playerB] = Object.values(players);
+    let winner;
+
+    if (playerA.deposit < playerB.deposit) {
+      winner = playerA;
+    } else if (playerB.deposit < playerA.deposit) {
+      winner = playerB;
+    } else {
+      winner = "tie";
+    }
+
+    io.emit("gameEnd", { winner });
+    players = {}; 
+  }
+
+  socket.on("disconnect", () => {
+    delete players[socket.id];
+    console.log("A player disconnected: ", socket.id);
+  });
+});
+
+server.listen(5000, () => {
+  console.log("Server is running on port 5000");
+});
